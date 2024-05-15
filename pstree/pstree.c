@@ -32,7 +32,7 @@ struct child_list {
 };
 
 
-void* visited[1024];
+process_t* visited[1024];
 int len = 0;
 void * root = NULL;
 
@@ -46,23 +46,27 @@ bool has_visited(pid_t p) {
 	return false;
 }
 
-void insert_child(process_t* p, process_t* c){
-	child_list_t* cur = p->child;
-	if (numeric_sort && cur->next != NULL) {
-		while (cur->next != NULL && cur->next->body != NULL && c->pid > cur->next->body->pid) {
-			cur = cur->next;
-		}
-		child_list_t* new = malloc(sizeof(child_list_t));
-		new->body = c;
-		new->next = cur->next;
-		cur->next = new;
+void insert_child(process_t* p, process_t* c) {
+    child_list_t* cur = p->child;
+    child_list_t* new_node = malloc(sizeof(child_list_t));
+    new_node->body = c;
+    new_node->next = NULL;
 
-	} else {
-		child_list_t* new = malloc(sizeof(child_list_t));
-		new->body = c;
-		new->next = cur->next;
-		cur->next = new;
-	}
+    if (numeric_sort) {
+        if (cur == NULL || c->pid < cur->body->pid) {
+            new_node->next = cur;
+            p->child = new_node;
+        } else {
+            while (cur->next != NULL && c->pid > cur->next->body->pid) {
+                cur = cur->next;
+            }
+            new_node->next = cur->next;
+            cur->next = new_node;
+        }
+    } else {
+        new_node->next = cur;
+        p->child = new_node;
+    }
 }
 
 
@@ -81,36 +85,44 @@ void read_process_dir() {
         // Check if the directory entry is a numeric value (a process ID)
         if (entry->d_type == DT_DIR && isdigit(entry->d_name[0])) {
             char stat_path[2048];
-            char stat[1024];
             FILE *fp;
 
             // Construct the path to the process' stat file
             snprintf(stat_path, sizeof(stat_path), "/proc/%s/stat", entry->d_name);
-            fp = fopen(stat_path, "r");
+	    fp = fopen(stat_path, "r");
+            if (fp == NULL) {
+                continue;
+            }
             // 从文件中读取数据
 			pid_t  pid;
 			char   comm[256];
 			char   state;
 			pid_t  ppid;
 
-    		if (fscanf(fp, "%d %s %c %d", &pid, comm, &state, &ppid) == 4) {
-				if (!has_visited(pid)) {
-					process_t* prop = malloc(sizeof(process_t));
-					prop->pid = pid;
-					strncpy(prop->comm, comm + 1, strlen(comm) - 2);
-					prop->state = state;
-					prop->ppid = ppid;
-					child_list_t* dummy =  malloc(sizeof(child_list_t));
-					dummy->body = NULL;
-					dummy->next = NULL;
-					prop->child = dummy;
-
-					visited[len++] = (void*)prop;
-				}
-    		} else {
-				printf("fscanf failed\n");
+    		if (fscanf(fp, "%d %255s %c %d", &pid, comm, &state, &ppid) == 4) {
+			if (!has_visited(pid)) {
+			    process_t* prop = malloc(sizeof(process_t));
+			    prop->pid = pid;
+	
+			    size_t len = strlen(comm);
+			    if (comm[0] == '(' && comm[len - 1] == ')') {
+				strncpy(prop->comm, comm + 1, len - 2);
+				prop->comm[len - 2] = '\0';
+			    } else {
+				strncpy(prop->comm, comm, sizeof(prop->comm) - 1);
+				prop->comm[sizeof(prop->comm) - 1] = '\0';
+			    }
+	
+			    prop->state = state;
+			    prop->ppid = ppid;
+			    prop->child = NULL;
+	
+			    visited[len++] = (void*)prop;
 			}
-			fclose(fp);
+		} else {
+			printf("fscanf failed\n");
+		}
+		fclose(fp);
         }
     }
 
